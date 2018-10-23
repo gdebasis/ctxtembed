@@ -78,6 +78,7 @@ class Tweet {
     }
     
     void cross(Tweets tweets, Tweet that) {
+        float wt;
         WordPairWts wpw = tweets.wpw;
         TfVector avec = null, bvec = null;
         DocTermMatrix mat = tweets.mat;
@@ -93,7 +94,10 @@ class Tweet {
                 TermFreq b = bvec.get(j);
                 if (a.termId == b.termId)
                     continue;
-                wpw.add(a.term, b.term, a.cross(tweets.mat.v, b));
+                
+                wt = a.cross(tweets.mat.v, b);
+                wt = wt * (this.sim + that.sim);
+                wpw.add(a.term, b.term, wt);
             }
         }
     }
@@ -136,19 +140,24 @@ class Tweets {
 public class GraphBuilder {
     DocTermMatrix dtmat;
     String fileName;
-    String mode;
+    PartitionMode mode;
     float headp;
     float tailp;
     String outFile;
     WordPairWts wpw;
-    Tweets[] lexPartition;
+    Tweets[] partition;
+    int timeIntervals;
     
-    public GraphBuilder(String fileName, String mode, float headp, float tailp, String outFile) {
+    enum PartitionMode { NONE, TEMPO, LEXICAL, TEMPO_LEXICAL }; 
+    PartitionMode modes[] = { PartitionMode.NONE, PartitionMode.TEMPO, PartitionMode.LEXICAL, PartitionMode.TEMPO_LEXICAL};
+    
+    public GraphBuilder(String fileName, int mode, float headp, float tailp, String outFile, int timeIntervals) {
         this.fileName = fileName;
         this.outFile = outFile;
         this.headp = headp;
         this.tailp = tailp;
-        this.mode = mode;
+        this.mode = modes[mode];
+        this.timeIntervals = timeIntervals;
         wpw = new WordPairWts();
     }
     
@@ -159,8 +168,9 @@ public class GraphBuilder {
         FileWriter fw = new FileWriter(outFile);
         BufferedWriter bw = new BufferedWriter(fw);
 
-        for (int i=0; i < lexPartition.length; i++) {
-            lexPartition[i].constructGraph();
+        for (int i=0; i < partition.length; i++) {
+            if (partition[i] != null)
+                partition[i].constructGraph();
         }
         
         // save graph
@@ -173,9 +183,25 @@ public class GraphBuilder {
     public void loadTweets() throws Exception {
         dtmat = new DocTermMatrix(fileName, headp, tailp);
         
-        lexPartition = new Tweets[dtmat.maxClusterId+1];
-        for (int i=0; i < lexPartition.length; i++) {
-            lexPartition[i] = new Tweets(this.dtmat, wpw);
+        switch (mode) {
+            case LEXICAL:
+                loadTweetsLexical();
+                break;
+            case TEMPO:
+                loadTweetsTemporal();
+                break;
+            default:
+                loadTweetsTempoLexical();
+        }
+        System.out.println("Number of partitions = " + partition.length);
+    }
+    
+    public void loadTweetsLexical() throws Exception {
+        System.out.println("Lexical Partitioning...");
+        
+        partition = new Tweets[dtmat.maxClusterId+1];
+        for (int i=0; i < partition.length; i++) {
+            partition[i] = new Tweets(this.dtmat, wpw);
         }
 
         FileReader fr = new FileReader(fileName);
@@ -184,23 +210,111 @@ public class GraphBuilder {
 
         while ((line = br.readLine()) != null) {
             Tweet t = new Tweet(line);
-            lexPartition[t.clusterId].add(t);
+            partition[t.clusterId].add(t);
+        }
+    }
+
+    public void loadTweetsTemporal() throws Exception {
+        System.out.println("Temporal Partitioning...");
+        int partitionSize = dtmat.v.getNumDocs()/this.timeIntervals;
+        System.out.println("Number of partitions: " + partitionSize);
+        
+        partition = new Tweets[partitionSize+1];
+
+        FileReader fr = new FileReader(fileName);
+        BufferedReader br = new BufferedReader(fr);
+        String line;
+
+        int count = 0, i = 0;
+        Tweets thisBatch = new Tweets(this.dtmat, wpw);
+        
+        while ((line = br.readLine()) != null) {
+            Tweet t = new Tweet(line);
+            thisBatch.add(t);
+            
+            count++;
+            
+            if (count == timeIntervals) {
+                // start a new partition
+                partition[i] = thisBatch;
+                thisBatch = new Tweets(this.dtmat, wpw);
+                count = 0;
+                i++;
+            }
+        }
+        // the remaining goes to the last batch
+        if (count > 0) {
+            partition[i] = thisBatch;
+        }
+    }
+    
+    private void lexPartitonBatch(HashMap<String, Tweets> map, Tweets batch, int timeInterval) {
+        for (Tweet t: batch.tweets) {
+            String key = timeInterval + ":" + t.clusterId;
+            Tweets lexbatch = map.get(key);
+            if (lexbatch == null) {
+                lexbatch = new Tweets(dtmat, wpw);
+                map.put(key, lexbatch);
+            }
+            lexbatch.add(t);
+        }
+    }
+    
+    public void loadTweetsTempoLexical() throws Exception {
+        System.out.println("Tempo-lexical Partitioning...");
+        
+        HashMap<String, Tweets> map = new HashMap<>(); // keyed by cluster-id and time
+        
+        FileReader fr = new FileReader(fileName);
+        BufferedReader br = new BufferedReader(fr);
+        String line;
+
+        int count = 0, timeSlot = 0;
+        Tweets thisBatch = new Tweets(this.dtmat, wpw);
+        
+        while ((line = br.readLine()) != null) {
+            Tweet t = new Tweet(line);
+            thisBatch.add(t);
+            
+            count++;
+            
+            if (count == timeIntervals) {
+                // start a new partition
+                lexPartitonBatch(map, thisBatch, timeSlot);
+                thisBatch = new Tweets(this.dtmat, wpw);
+                count = 0;
+                timeSlot++;
+            }
+        }
+        // remaining
+        lexPartitonBatch(map, thisBatch, timeSlot);
+        
+        partition = new Tweets[map.size()];
+        int i = 0;
+        for (Tweets tws: map.values()) {
+            partition[i++] = tws;
         }
     }
     
     public static void main(String[] args) {
-        if (args.length < 5) {
-            System.out.println("usage: java GraphBuilder <input text file (each line a document)> <mode - (t/l/tl)> <head %-le> <tail %-le> <out file>");
+        if (args.length < 6) {
+            System.out.println("usage: java GraphBuilder\n" 
+                    + "\t<input text file (each line a document)>\n"
+                    + "\t<mode - (temporal (1)/ lexical (2) /tempo-lexical (3))>\n"
+                    + "\t<head %-le> <tail %-le>\n"
+                    + "\t<out file>\n"
+                    + "\t<#time intervals>\n");
             return;
         }        
         String inputFile = args[0];
-        String mode = args[1];
+        int mode = Integer.parseInt(args[1]);
         float headp = Float.parseFloat(args[2])/100;
         float tailp = Float.parseFloat(args[3])/100;        
         String oFile = args[4];
+        int timeIntervals = Integer.parseInt(args[5]);
         
         try {
-            GraphBuilder gb = new GraphBuilder(inputFile, mode, headp, tailp, oFile);
+            GraphBuilder gb = new GraphBuilder(inputFile, mode, headp, tailp, oFile, timeIntervals);
             gb.constructGraph();
         }
         catch (Exception ex) { ex.printStackTrace(); }

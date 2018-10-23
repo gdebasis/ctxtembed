@@ -51,6 +51,7 @@ class Vocab {
     String fileName;
     int termId = 0;
     long collectionSize;
+    int numDocs;
     HashMap<String, TermFreq> termIdMap;
     HashMap<Integer, String> idToStrMap;
 
@@ -109,6 +110,7 @@ class Vocab {
             }
             
             collectionSize += tokens.length;
+            numDocs++;
         }
 
         System.out.println(String.format("Initialized vocabulary comprising %d terms", termId));
@@ -160,6 +162,8 @@ class Vocab {
     int vocabSize() {
         return termId;
     }
+    
+    int getNumDocs() { return numDocs; }
     
     long getCollectionSize() { return this.collectionSize; }
     
