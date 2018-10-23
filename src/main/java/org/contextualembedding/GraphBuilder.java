@@ -77,7 +77,7 @@ class Tweet {
         this.text = tokens[4];
     }
     
-    void cross(Tweets tweets, Tweet that) {
+    void cross(Tweets tweets, Tweet that, GraphBuilder.PartitionMode mode) {
         float wt;
         WordPairWts wpw = tweets.wpw;
         TfVector avec = null, bvec = null;
@@ -96,7 +96,8 @@ class Tweet {
                     continue;
                 
                 wt = a.cross(tweets.mat.v, b);
-                wt = wt * (this.sim + that.sim);
+                if (mode != GraphBuilder.PartitionMode.TEMPO)
+                    wt = wt * (this.sim + that.sim);
                 wpw.add(a.term, b.term, wt);
             }
         }
@@ -121,7 +122,7 @@ class Tweets {
     Tweet get(int i) { return tweets.get(i); }
     int getSize() { return tweets.size(); }
     
-    void constructGraph() {
+    void constructGraph(GraphBuilder.PartitionMode mode) {
         int numTweets = tweets.size();
         
         for (int i=0; i < numTweets-1; i++) {
@@ -130,7 +131,7 @@ class Tweets {
             for (int j=i+1; j < numTweets; j++) {
                 Tweet b = tweets.get(j);
                 
-                a.cross(this, b);
+                a.cross(this, b, mode);
             }    
         }
     }
@@ -170,7 +171,7 @@ public class GraphBuilder {
 
         for (int i=0; i < partition.length; i++) {
             if (partition[i] != null)
-                partition[i].constructGraph();
+                partition[i].constructGraph(mode);
         }
         
         // save graph
