@@ -163,13 +163,16 @@ public class GraphBuilder {
     }
     
     public void constructGraph() throws Exception {
+        System.out.println("Loading tweets...");
         loadTweets();
+        System.out.println("Loaded tweets...");
         
         // Graph output writer
         FileWriter fw = new FileWriter(outFile);
         BufferedWriter bw = new BufferedWriter(fw);
 
         for (int i=0; i < partition.length; i++) {
+            System.out.println(String.format("Building edges for %d-th partition", i));
             if (partition[i] != null)
                 partition[i].constructGraph(mode);
         }
